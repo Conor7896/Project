@@ -1,0 +1,184 @@
+#Project used data available on http://www.gersteinlab.org/proj/bottleneck/. The were 6 networks that were manipulated below for usage in the project.
+
+
+
+#Creating original gene regulatory network matrix
+V1 = reg[,1]
+V2 = reg[,2]
+reg$V1 = factor(reg$V1,levels=union(reg$V1,reg$V2))
+reg$V2 = factor(reg$V2,levels=union(reg$V1,reg$V2))
+res = table(reg)
+res[res>0] = 1
+write.csv(res,"res.csv")
+binaryreg = ifelse(res > 0,1,0)
+write.csv(binaryreg,"regbinary.csv")
+#Find all gene pairs
+union = union(V1,V2)
+
+#Interaction network matrix
+intbin = table(int)
+int$V1 = factor(int$V1,levels=union(int$V1,int$V2))
+int$V2 = factor(int$V2,levels=union(int$V1,int$V2))
+intbin[intbin>0] = 1
+binaryint = ifelse(intbin > 0,1,0)
+write.csv(binaryint,"binaryint.csv")
+
+#Subsetting interaction to find only genes in which both pairs occur in regulatory network
+intsub <- subset(binaryint, rownames(binaryint) %in% union,colnames(binaryint) %in% union)
+
+#Checking if matrix is correct
+V1I = int[,1]
+V2I = int[,2]
+intunion = union(V1I,V2I)
+intreg = intersect(union,intunion)
+
+#Create matrix of same dimensions as regulatory to put our subsetted matrix
+regint= matrix(0,nrow = 3359,ncol = 3359,dimnames = list(union,union)) 
+
+#Putting intsub onto matrix of zeros
+regint[rownames(intsub),colnames(intsub)]<-intsub
+write.csv(regint,"regint.csv")
+
+#Metabolic network
+metbin = table(met)
+metbin[metbin>0]=1
+binarymet = ifelse(metbin > 0,1,0)
+metsub = subset(binarymet, rownames(binarymet) %in% union,colnames(binarymet) %in% union)
+regmet = matrix(0,nrow = 3359,ncol = 3359,dimnames = list(union,union)) 
+regmet[rownames(metsub),colnames(metsub)]<-metsub
+write.csv(regmet,"regmet.csv")
+
+#FYI network
+fyitab = table(FYI)
+fyitab[fyitab>0]=1
+binaryfyi = ifelse(fyitab>0,1,0)
+fyisub = subset(binaryfyi, rownames(binaryfyi) %in% union,colnames(binaryfyi) %in% union)
+regfyi = matrix(0,nrow = 3359,ncol = 3359,dimnames = list(union,union))
+regfyi[rownames(fyisub),colnames(fyisub)]<-fyisub
+write.csv(regfyi,"regfyi.csv")
+
+#DIP-core network
+diptab =table(DIP.core)
+diptab[diptab>0]=1
+binarydip = ifelse(diptab>0,1,0)
+dipsub = subset(binarydip, rownames(binarydip) %in% union,colnames(binarydip) %in% union)
+regdip = matrix(0,nrow = 3359,ncol = 3359,dimnames = list(union,union))
+regdip[rownames(dipsub),colnames(dipsub)]<-dipsub
+write.csv(regdip,"regdip.csv")
+
+#Genetic network
+gentab =table(genetic)
+gentab[gentab>0]=1
+binarygen = ifelse(gentab>0,1,0)
+gensub = subset(binarygen, rownames(binarygen) %in% union,colnames(binarygen) %in% union)
+reggen = matrix(0,nrow = 3359,ncol = 3359,dimnames = list(union,union))
+reggen[rownames(gensub),colnames(gensub)]<-gensub
+write.csv(reggen,"reggen.csv")
+
+#Vectorising matrices for analysis
+regvect = as.vector(binaryreg)
+regintvect = as.vector(regint)
+regdipvect = as.vector(regdip)
+regfyivect = as.vector(regfyi)
+reggenvect = as.vector(reggen)
+regmetvect = as.vector(regmet)
+
+#Create data frame of matrices and split for cross validation
+allvectors = cbind(regvect,regintvect,regdipvect,regfyivect,reggenvect,regmetvect)
+
+library(glmnet)
+library(caret)
+#Randomizing data
+allvectors = read.csv("allvectors.csv")
+#Remove all rows of all zeros
+allvectors =allvectors[rowSums(allvectors[, -1])>0, ]
+allvectors$X <- NULL
+#Randomly shuffle the data
+cfdata<-allvectors[sample(nrow(allvectors)),]
+
+#The following code is a nested cross validation used to gain an insight into the predictor variables using logistic regression. It was not included in the project.
+
+#Create 10 equally size folds
+folds <- cut(seq(1,nrow(cfdata)),breaks=10,labels=FALSE)
+#Perform 10 fold cross validation
+for(i in 1:10){
+  #Segement your data by fold using the which() function 
+  testIndexes <- which(folds==i,arr.ind=TRUE)
+  testData <- cfdata[testIndexes, ]
+  trainData <- cfdata[-testIndexes, ]
+  #Use the test and train data partitions however you desire...
+}
+
+# define training control
+train_control <- trainControl(method = "cv", number = 10)
+
+trainData$regvect = as.factor(trainData$regvect)
+# train the model on training set
+model <- train(regvect ~ .,
+               data = trainData,
+               trControl = train_control,
+               method = "glm",
+               family=binomial())
+# train the model on training set
+model2 <- train(regvect ~ regintvect+regfyivect+reggenvect,
+               data = trainData,
+               trControl = train_control,
+               method = "glm",
+               family=binomial())
+# train the model on training set
+model3 <- train(regvect ~ regintvect+regfyivect,
+               data = trainData,
+               trControl = train_control,
+               method = "glm",
+               family=binomial())
+# train the model on training set
+model4 <- train(regvect ~ regintvect+reggenvect,
+                data = trainData,
+                trControl = train_control,
+                method = "glm",
+                family=binomial())
+# train the model on training set
+model5 <- train(regvect ~ reggenvect,
+                data = trainData,
+                trControl = train_control,
+                method = "glm",
+                family=binomial())
+
+model$results
+model2$results
+model3$results
+# print cv scores
+summary(model)
+
+model$resample
+
+
+
+#Test logistic regression on first segment of training data
+
+#Test logistic regression on first segment of training data
+mylogit =glm(regvect ~., data = trainData, family = binomial(link='logit'))
+summary(mylogit)
+
+mylogit2 =glm(regvect ~ regfyivect+regintvect+reggenvect, data = trainData, family = binomial(link='logit'))
+summary(mylogit2)
+
+mylogit3 =glm(regvect ~ regfyivect+reggenvect, data = trainData, family = binomial(link='logit'))
+summary(mylogit3)
+
+mylogit4 =glm(regvect ~ regfyivect+regintvect, data = trainData, family = binomial(link='logit'))
+summary(mylogit4)
+
+mylogit5 =glm(regvect ~ reggenvect+ regintvect, data = trainData, family = binomial(link='logit'))
+summary(mylogit5)
+
+mylogit6 =glm(regvect ~ reggenvect, data = trainData, family = binomial(link='logit'))
+summary(mylogit6)
+
+mylogit7 =glm(regvect ~ reggenvect+regmetvect+regintvect, data = trainData, family = binomial(link='logit'))
+summary(mylogit6)
+
+
+
+
+
