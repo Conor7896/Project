@@ -178,6 +178,179 @@ summary(mylogit6)
 mylogit7 =glm(regvect ~ reggenvect+regmetvect+regintvect, data = trainData, family = binomial(link='logit'))
 summary(mylogit6)
 
+#10*10 CV for logistic regression
+
+
+
+levels(factor(cfdata$regvect))
+
+cfdata$regvect = as.factor(cfdata$regvect)
+levels(cfdata$regvect) <- c("Nollink", "link")
+
+
+#create general elastic net train function.
+train.data <- function(logisticreg.data, k_folds=10){
+  
+  
+  reglog.models = list()
+  reglog.outer.models = list()
+  reglog.test.index.list = sample(1:nrow(logisticreg.data),k_folds) #reduce bias via random sampling
+  LOO.index <- 1
+  
+  for (i in 1:k_folds) {
+    log.train.data <- logisticreg.data[-reglog.test.index.list[LOO.index],]
+    log.test.data <- logisticreg.data[reglog.test.index.list[LOO.index],]
+    #print(tibble(train.data))
+    #print(tibble(test.data))
+    print("-----")
+    
+    # Outer cross validation :  
+    reglog.values = c()
+    reglog.avg.errors <- c()
+    for (j in 1:(k_folds-1)) {
+      
+      print(j)
+      
+      # Inner cross validation using Caret trainControl() does inner CV and produces 10 inner trained models.
+      train.reglog <- trainControl(method = "cv", number  = 10)
+      model.toy.PR.reglog <- train(regvect ~ . , data = log.train.data, tuneLength = 10, method = 'glm',family = binomial(link= 'logit'), trControl = train.reglog, preProc = c("center", "scale"),na.action = na.fail)
+      
+      reglog.models[[j]] <- model.toy.PR.reglog
+      
+      #From the above 10 models, we calculate their average error(should have actually been average accuracy)
+      reglog.avg.error <- mean(model.toy.PR.reglog$results$Accuracy)
+      reglog.avg.errors <- c(reglog.avg.errors,reglog.avg.error)
+      #print(lo.avg_errors)
+      
+      
+      #End of inner loop
+      
+    }
+    
+    #From the above average errors, we will choose a model which can be used to train the entire data, for that we subtract the accuracy of each model from its average accuracy ( average error is the variable name here ) and then check which model has minimum deviance from the avergae and choose that model to train our entire data.
+    
+    #minimum deviance from mean
+    
+    for (element in reglog.avg.errors) {
+      reglog.value <- abs(mean(reglog.avg.errors)-element)
+      #print(lo.value)
+      reglog.values <- c(reglog.values, reglog.value)
+      #print(lo.values)
+      #print(element)
+      
+    }
+    #print(length(lo.values)) 
+    
+    #To show which model was selected : 
+    #Get index of models which have min value of deviance from mean of accuracy, thus that will be the optimal index. And we will only print out the model chosen by this method.
+    reglog.optimal.index <- which(min(reglog.values)== reglog.values) 
+    print(reglog.optimal.index)
+    
+    #since many models were performing same, with same accuracies , we randomly choose a model
+    if(length(reglog.optimal.index) > 1){
+      reglog.optimal.index = sample(1:length(reglog.optimal.index),1)
+    }
+    reglog.models[[reglog.optimal.index]]
+    print(lo.models[[reglog.optimal.index]]$bestTune)#get the model corresponding to that index 
+    
+    
+    #From the above chosen model, we consider it to have the best hyperparameters and train on that entire outer fold train data and then calculate  std error:
+    
+    #Outer training
+    
+    #Value.grid will be the grid of best values of alpha and lambda we got from inner fold CV. And then we train again using caret function.
+    
+    #lo.value.grid <- expand.grid(.alpha = models[[optimal.index]]$bestTune$alpha, .lambda = models[[optimal.index]]$bestTune$lambda)
+    train.reglog <- trainControl(method = "cv", number  = 10, classProbs = TRUE)
+    final_model.toy.PR.reglog <- train(regvect ~ . , data = log.train.data, tuneLength = 10, method = 'glm', family = binomial(link = 'logit'), trControl = train.reglog, preProc = c("center", "scale"),na.action = na.fail)
+    reglog.outer.models[[i]] <- final_model.toy.PR.reglog
+    print(reglog.outer.models)
+    
+    
+    LOO.index<- LOO.index+1
+  }
+  
+  
+  #Std errors : 
+  #Get the mean of all accuracies : 
+  #We get a list as model output, so we select specific items and since result was 4th we use lapply on 4th and then accuracy was 3rd so we use lapply for 3 to get accuracy values
+  
+  reglog.accuracies <- unlist(lapply(lapply(reglog.outer.models, '[[', 4),'[[',3))
+  #print(lo.accuracies)
+  reglog.outer_mean <- mean(reglog.accuracies) 
+  #print(outer_mean)
+  
+  
+  #Thus we again calculate the mean of accuracy , subtract each accuracy from the mean and get outer_values
+  reglog.outer_values <- c()
+  for (number in reglog.accuracies) {
+    reglog.outer_value <- (reglog.outer_mean - number)^2
+    #print(outer_value)
+    reglog.outer_values <- c(reglog.outer_values, reglog.outer_value)
+    #print(outer_values)
+  }
+  
+  # We calculate the sd of outer_values
+  reglog.sd_outer <- sd(reglog.outer_values)
+  #print(lo.sd_outer)
+  
+  #standard error will be sd divided by sqrt of sample size , if the std_error is small we proceed with testing our data using the optimal train model. If it is large we need to repeat CV again. 
+  
+  reglog.std_error <- reglog.sd_outer/ sqrt(length(logisticreg.data))
+  print(reglog.std_error)
+  
+  
+  #To choose a model to be used for testing the data :
+  reglog.outer_vs <- c()  
+  for (number in reglog.outer_values) {
+    reglog.outer_v <- (reglog.std_error - number)^2
+    # print(lo.outer_v)
+    reglog.outer_vs <- c(reglog.outer_vs, reglog.outer_v)
+    
+  }
+  
+  #print(lo.outer_vs)
+  
+  #Choose the model : 
+  reglog.final_index <- which(min(reglog.outer_vs) == reglog.outer_vs)
+  print(reglog.final_index)
+  
+  plot.new()
+  
+  #plot of model selection
+  { plot(reglog.avg_errors, type = "line", main = "Model selected to train Logistic regression")
+    abline(h = mean(reglog.avg_errors))
+    abline(v = reglog.optimal.index)}
+  
+  plot.new()
+  
+  #plot of model selection
+  { plot(reglog.avg_errors, type = "line", main = "Model selected to test Logistic regression")
+    abline(h = mean(reglog.avg_errors))
+    abline(v = reglog.final_index)}
+  
+  #since many models were performing same, with same accuracies , we randomly choose a model
+  if(length(reglog.final_index) > 1){
+    reglog.final_index = sample(1:length(reglog.final_index),1)
+  }
+  reglog.outer.models[[reglog.final_index]]
+  print(reglog.outer.models[[reglog.final_index]])
+  
+  #Test data 
+  
+  predict.PR.reglog <- predict(reglog.outer.models[[reglog.final_index]], log.test.data)
+  print(predict.PR.reglog)
+  plot(predict.PR.reglog)
+  
+  
+  return(reglog.outer.models[[reglog.final_index]])
+  
+}
+
+
+
+reglog.final.output <- train.data(cfdata, 10)
+reglog.final.output
 
 
 
