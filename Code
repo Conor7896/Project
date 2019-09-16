@@ -178,7 +178,7 @@ summary(mylogit6)
 mylogit7 =glm(regvect ~ reggenvect+regmetvect+regintvect, data = trainData, family = binomial(link='logit'))
 summary(mylogit6)
 
-#10*10 CV for logistic regression
+#10*10 CV for logistic regression, all other machine learnings methods were variations on the following code:
 
 
 
